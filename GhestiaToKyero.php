@@ -167,17 +167,21 @@ class GhestiaToKyero
         // Convert properties
         $count = 0;
         $skipped = 0;
+        $sourceProperties = 0;
 
         foreach ($ghestia->inmueble as $inmueble) {
             try {
-                $this->convertProperty($kyero, $inmueble);
-                $count++;
+                $sourceProperties++;
+                $converted = $this->convertPropertyMultiple($kyero, $inmueble);
+                $count += $converted;
             } catch (Exception $e) {
                 $ref = (string)$inmueble->Referencia;
                 $this->log[] = "Warning: Skipped property $ref: " . $e->getMessage();
                 $skipped++;
             }
         }
+
+        $this->log[] = "Source properties: $sourceProperties";
 
         $this->log[] = "Converted: $count properties";
         if ($skipped > 0) {
@@ -220,23 +224,91 @@ class GhestiaToKyero
     }
 
     /**
-     * Convert single property
+     * Convert single property - returns array of converted properties
+     * (may return multiple if property has both sale and rental prices)
      */
-    private function convertProperty($kyero, $inmueble)
+    public function convertPropertyMultiple($kyero, $inmueble)
+    {
+        $count = 0;
+        $operations = $this->getAllPriceInfo($inmueble);
+
+        foreach ($operations as $op) {
+            $this->convertPropertyWithOperation($kyero, $inmueble, $op['price'], $op['price_freq'], $op['suffix']);
+            $count++;
+        }
+
+        return $count;
+    }
+
+    /**
+     * Get all available price operations for a property
+     */
+    private function getAllPriceInfo($inmueble)
+    {
+        $operations = [];
+
+        $precioVenta = $this->parseFloat((string)$inmueble->PrecioVenta);
+        $precioAlquiler = $this->parseFloat((string)$inmueble->PrecioAlquiler);
+        $precioTemporada = $this->parseFloat((string)$inmueble->PrecioAlquilerTemporada);
+
+        if ($precioVenta && $precioVenta > 0) {
+            $operations[] = [
+                'price' => (int)$precioVenta,
+                'price_freq' => 'sale',
+                'suffix' => '-sale'
+            ];
+        }
+
+        if ($precioAlquiler && $precioAlquiler > 0) {
+            $operations[] = [
+                'price' => (int)$precioAlquiler,
+                'price_freq' => 'month',
+                'suffix' => '-rent'
+            ];
+        }
+
+        if ($precioTemporada && $precioTemporada > 0) {
+            $operations[] = [
+                'price' => (int)$precioTemporada,
+                'price_freq' => 'week',
+                'suffix' => '-holiday'
+            ];
+        }
+
+        // If no price found, return default
+        if (empty($operations)) {
+            $operations[] = [
+                'price' => 0,
+                'price_freq' => 'sale',
+                'suffix' => ''
+            ];
+        }
+
+        // If only one operation, no suffix needed
+        if (count($operations) === 1) {
+            $operations[0]['suffix'] = '';
+        }
+
+        return $operations;
+    }
+
+    /**
+     * Convert single property with specific operation
+     */
+    private function convertPropertyWithOperation($kyero, $inmueble, $price, $priceFreq, $suffix)
     {
         $prop = $kyero->addChild('property');
 
-        // Required: id, ref
+        // Required: id, ref (with suffix for multiple operations)
         $referencia = (string)$inmueble->Referencia;
-        $prop->addChild('id', $this->escapeXml($referencia));
-        $prop->addChild('ref', $this->escapeXml($referencia));
+        $prop->addChild('id', $this->escapeXml($referencia . $suffix));
+        $prop->addChild('ref', $this->escapeXml($referencia . $suffix));
 
         // Required: date
         $fecha = (string)$inmueble->FechaModificacion;
         $prop->addChild('date', $this->formatDate($fecha));
 
         // Required: price, currency, price_freq
-        list($price, $priceFreq) = $this->getPriceInfo($inmueble);
         $prop->addChild('price', $price ?: '0');
         $prop->addChild('currency', 'EUR');
         $prop->addChild('price_freq', $priceFreq ?: 'sale');
@@ -365,26 +437,6 @@ class GhestiaToKyero
             }
         }
         return $result;
-    }
-
-    /**
-     * Get price and price_freq
-     */
-    private function getPriceInfo($inmueble)
-    {
-        $precioVenta = $this->parseFloat((string)$inmueble->PrecioVenta);
-        $precioAlquiler = $this->parseFloat((string)$inmueble->PrecioAlquiler);
-        $precioTemporada = $this->parseFloat((string)$inmueble->PrecioAlquilerTemporada);
-
-        if ($precioVenta && $precioVenta > 0) {
-            return [(int)$precioVenta, 'sale'];
-        } elseif ($precioAlquiler && $precioAlquiler > 0) {
-            return [(int)$precioAlquiler, 'month'];
-        } elseif ($precioTemporada && $precioTemporada > 0) {
-            return [(int)$precioTemporada, 'week'];
-        }
-
-        return [null, null];
     }
 
     /**
