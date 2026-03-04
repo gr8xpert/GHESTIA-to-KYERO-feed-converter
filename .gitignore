@@ -1,0 +1,20 @@
+# Config with real credentials
+config.php
+
+# Generated feeds
+feeds/*.xml
+feeds/*.json
+feeds/*.log
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
